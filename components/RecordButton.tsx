@@ -23,6 +23,8 @@ interface RecordButtonProps {
   onButtonTouchStart?: () => void;
   onButtonTouchEnd?: () => void;
   screenTouchActive?: boolean;
+  // Camera ready state for Android
+  isCameraReady?: boolean;
 }
 
 export default function RecordButton({
@@ -39,6 +41,7 @@ export default function RecordButton({
   onButtonTouchStart,
   onButtonTouchEnd,
   screenTouchActive = false,
+  isCameraReady = true,
 }: RecordButtonProps) {
   const [isRecording, setIsRecording] = React.useState(false);
   const [recordingMode, setRecordingMode] = React.useState<
@@ -84,7 +87,30 @@ export default function RecordButton({
   }, [screenTouchActive, buttonInitiatedRecording, isRecording, recordingMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startRecording = (mode: "tap" | "hold") => {
-    if (!cameraRef.current || isRecording || remainingTime <= 0) return;
+    console.log("[RecordButton] startRecording called", {
+      hasCameraRef: !!cameraRef.current,
+      isRecording,
+      remainingTime,
+      isCameraReady,
+      mode
+    });
+    
+    if (!cameraRef.current) {
+      console.log("[RecordButton] BLOCKED: cameraRef.current is null");
+      return;
+    }
+    if (isRecording) {
+      console.log("[RecordButton] BLOCKED: already recording");
+      return;
+    }
+    if (remainingTime <= 0) {
+      console.log("[RecordButton] BLOCKED: no remaining time");
+      return;
+    }
+    if (!isCameraReady) {
+      console.log("[RecordButton] BLOCKED: camera not ready yet, waiting...");
+      return;
+    }
 
     setIsRecording(true);
     setRecordingMode(mode);
@@ -143,11 +169,19 @@ export default function RecordButton({
       ]).start();
     }
 
+    console.log("[RecordButton] Starting recordAsync with maxDuration:", sessionMaxDuration);
+    
     recordingPromiseRef.current = cameraRef.current
       .recordAsync({ maxDuration: sessionMaxDuration })
       .then((video) => {
         const recordingDuration =
           (Date.now() - recordingStartTimeRef.current) / 1000;
+
+        console.log("[RecordButton] recordAsync resolved", { 
+          hasVideo: !!video, 
+          uri: video?.uri,
+          recordingDuration 
+        });
 
         if (!manuallyStoppedRef.current && video?.uri) {
           console.log("Recording saved:", video.uri);
@@ -159,8 +193,13 @@ export default function RecordButton({
         const recordingDuration =
           (Date.now() - recordingStartTimeRef.current) / 1000;
 
+        console.log("[RecordButton] recordAsync FAILED", { 
+          error: error?.message || error,
+          recordingDuration 
+        });
+
         if (!error.message?.includes("stopped")) {
-          console.log("Recording failed");
+          console.log("Recording failed", error);
         }
         onRecordingComplete?.(null, mode, recordingDuration);
         return null;

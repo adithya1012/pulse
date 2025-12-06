@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   AppState,
   AppStateStatus,
+  Platform,
   StyleSheet,
   TouchableOpacity,
   View,
@@ -188,7 +189,7 @@ export default function PreviewScreen() {
     };
   }, [player1, player2]);
 
-  // Pause players when screen loses focus
+  // Pause and release players when screen loses focus (critical for Android camera)
   useFocusEffect(
     useCallback(() => {
       // Screen is focused - resume playing if needed
@@ -198,22 +199,32 @@ export default function PreviewScreen() {
       }
 
       return () => {
-        // Screen is losing focus - safely pause all players
-        try {
-          if (player1 && typeof player1.pause === "function") {
-            player1.pause();
+        // Screen is losing focus - release players on Android to free camera resources
+        const releaseOnBlur = async () => {
+          try {
+            if (player1) {
+              player1.pause();
+              if (Platform.OS === "android") {
+                await player1.replaceAsync(null as any);
+              }
+            }
+          } catch {
+            // Silently ignore
           }
-        } catch (error) {
-          // Silently ignore - player is already destroyed
-        }
 
-        try {
-          if (player2 && typeof player2.pause === "function") {
-            player2.pause();
+          try {
+            if (player2) {
+              player2.pause();
+              if (Platform.OS === "android") {
+                await player2.replaceAsync(null as any);
+              }
+            }
+          } catch {
+            // Silently ignore
           }
-        } catch (error) {
-          // Silently ignore - player is already destroyed
-        }
+        };
+        
+        releaseOnBlur();
       };
     }, [player1, player2, useSecondPlayer, videoUris.length])
   );
@@ -268,10 +279,45 @@ export default function PreviewScreen() {
     }
   }, [currentVideoIndex, videoUris, useSecondPlayer, player1, player2]);
 
+  // Helper function to release players - critical for Android camera resources
+  const releasePlayers = useCallback(async () => {
+    try {
+      if (player1) {
+        player1.pause();
+        // On Android, replace with empty source to release decoder resources
+        if (Platform.OS === "android") {
+          await player1.replaceAsync(null as any);
+        }
+      }
+    } catch {
+      // Silently ignore - player may already be destroyed
+    }
+
+    try {
+      if (player2) {
+        player2.pause();
+        // On Android, replace with empty source to release decoder resources
+        if (Platform.OS === "android") {
+          await player2.replaceAsync(null as any);
+        }
+      }
+    } catch {
+      // Silently ignore - player may already be destroyed
+    }
+  }, [player1, player2]);
+
   const handleClose = useCallback(async () => {
+    // Release video players before navigating away (critical for Android)
+    await releasePlayers();
+    
+    // Small delay to ensure resources are released on Android
+    if (Platform.OS === "android") {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
     // Dismiss the screen
     router.dismiss();
-  }, []);
+  }, [releasePlayers]);
 
   if (isLoading || videoUris.length === 0) {
     return (
@@ -326,21 +372,11 @@ export default function PreviewScreen() {
       // Remove progress listener
       progressListener?.remove();
 
-      // Pause all players before navigating
-      try {
-        if (player1 && typeof player1.pause === "function") {
-          player1.pause();
-        }
-      } catch (error) {
-        // Silently ignore - player is already destroyed
-      }
-
-      try {
-        if (player2 && typeof player2.pause === "function") {
-          player2.pause();
-        }
-      } catch (error) {
-        // Silently ignore - player is already destroyed
+      // Release players before navigating (critical for Android camera resources)
+      await releasePlayers();
+      
+      if (Platform.OS === "android") {
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
 
       // Navigate to merged video screen
@@ -416,18 +452,13 @@ export default function PreviewScreen() {
       {videoUris.length === 1 && (
         <TouchableOpacity
           style={[styles.concatenateButton, { bottom: insets.bottom + 20 }]}
-          onPress={() => {
-            try {
-              if (player1 && typeof player1.pause === "function") {
-                player1.pause();
-              }
-            } catch (error) {}
-
-            try {
-              if (player2 && typeof player2.pause === "function") {
-                player2.pause();
-              }
-            } catch (error) {}
+          onPress={async () => {
+            // Release players before navigating (critical for Android)
+            await releasePlayers();
+            
+            if (Platform.OS === "android") {
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
 
             router.push({
               pathname: "/merged-video",

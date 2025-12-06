@@ -7,14 +7,15 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   StyleSheet,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import { router, useLocalSearchParams } from "expo-router";
-import * as FileSystem from "expo-file-system";
 
 export default function MergedVideoScreen() {
   const { videoUri, draftId } = useLocalSearchParams<{
@@ -63,6 +64,31 @@ export default function MergedVideoScreen() {
     }
   }, [isFullscreen, player]);
 
+  // Helper function to release player - critical for Android camera resources
+  const releasePlayer = useCallback(async () => {
+    try {
+      if (player) {
+        player.pause();
+        // On Android, replace with empty source to release decoder resources
+        if (Platform.OS === "android") {
+          await player.replaceAsync(null as any);
+        }
+      }
+    } catch {
+      // Silently ignore - player may already be destroyed
+    }
+  }, [player]);
+
+  // Release player when screen loses focus (critical for Android camera)
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        // Screen is losing focus - release player on Android
+        releasePlayer();
+      };
+    }, [releasePlayer])
+  );
+
   // Cleanup player on component unmount
   useEffect(() => {
     return () => {
@@ -70,15 +96,22 @@ export default function MergedVideoScreen() {
         if (player && typeof player.pause === "function") {
           player.pause();
         }
-      } catch (error) {
+      } catch {
         // Silently ignore - player is already destroyed
       }
     };
   }, [player]);
 
-  const handleBack = useCallback(() => {
+  const handleBack = useCallback(async () => {
+    // Release player before navigating back (critical for Android)
+    await releasePlayer();
+    
+    if (Platform.OS === "android") {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
     router.back();
-  }, []);
+  }, [releasePlayer]);
 
   const toggleFullscreen = () => {
     if (!isFullscreen) {

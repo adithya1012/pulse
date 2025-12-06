@@ -97,6 +97,15 @@ export default function ShortsScreen() {
 
   // Recording state
   const [isRecording, setIsRecording] = React.useState(false);
+  
+  // Camera ready state - tracks if camera is ready for recording (important for Android)
+  const [isCameraReady, setIsCameraReady] = React.useState(false);
+  
+  // Camera key - used to force remount on Android when returning from preview
+  const [cameraKey, setCameraKey] = React.useState(0);
+  
+  // Track if we've ever lost focus (to know when we're "returning" vs first mount)
+  const hasLostFocusRef = React.useRef(false);
 
   // Screen-level touch state for continuous hold recording
   const [screenTouchActive, setScreenTouchActive] = React.useState(false);
@@ -155,7 +164,7 @@ export default function ShortsScreen() {
         duration: duration,
         uri: videoUri,
       };
-
+      console.log("NEW SEGEMENT CREATED: ", newSegment)
       await updateSegmentsAfterRecording(newSegment, selectedDuration);
     }
   };
@@ -174,6 +183,17 @@ export default function ShortsScreen() {
 
   useFocusEffect(
     React.useCallback(() => {
+      console.log("[ShortsScreen] Screen gained focus, hasLostFocus:", hasLostFocusRef.current);
+      
+      // Reset camera ready state and force remount on Android ONLY when returning to screen
+      // (not on initial mount, which would cause unnecessary remount)
+      if (Platform.OS === "android" && hasLostFocusRef.current) {
+        console.log("[ShortsScreen] Returning to screen - forcing camera remount");
+        setIsCameraReady(false);
+        // Increment camera key to force CameraView remount
+        setCameraKey(prev => prev + 1);
+      }
+      
       const reloadDraft = async () => {
         const draftToReload = draftId || currentDraftId;
         if (draftToReload) {
@@ -193,8 +213,28 @@ export default function ShortsScreen() {
         }
       };
       reloadDraft();
+      
+      return () => {
+        console.log("[ShortsScreen] Screen losing focus");
+        hasLostFocusRef.current = true;
+      };
     }, [draftId, currentDraftId, setRecordingSegments])
   );
+
+  // Handle camera ready callback
+  // On Android, add a delay after onCameraReady to allow the hardware encoder to fully initialize
+  const handleCameraReady = React.useCallback(() => {
+    console.log("[ShortsScreen] Camera onCameraReady fired");
+    if (Platform.OS === "android") {
+      // Android needs extra time for the video encoder to be ready after camera initialization
+      setTimeout(() => {
+        console.log("[ShortsScreen] Camera is ready (after encoder init delay)");
+        setIsCameraReady(true);
+      }, 500);
+    } else {
+      setIsCameraReady(true);
+    }
+  }, []);
 
   const handleTimeSelect = (timeInSeconds: number) => {
     // Check if current segments exceed the new duration limit
@@ -451,12 +491,14 @@ export default function ShortsScreen() {
           >
             <Animated.View style={{ flex: 1 }}>
               <CameraView
+                key={Platform.OS === "android" ? `camera-${cameraKey}` : undefined}
                 ref={cameraRef}
                 style={styles.camera}
                 mode="video"
                 facing={cameraFacing}
                 enableTorch={torchEnabled}
                 zoom={zoom}
+                onCameraReady={handleCameraReady}
                 {...(Platform.OS === "ios"
                   ? {
                       videoStabilizationMode: mapToNativeVideoStabilization(
@@ -538,6 +580,7 @@ export default function ShortsScreen() {
             onButtonTouchStart={handleButtonTouchStart}
             onButtonTouchEnd={handleButtonTouchEnd}
             screenTouchActive={screenTouchActive}
+            isCameraReady={isCameraReady}
           />
         </Animated.View>
       </PanGestureHandler>
