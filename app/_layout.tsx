@@ -8,16 +8,21 @@ import { useRouter } from "expo-router";
 import { Stack } from "expo-router";
 import * as Linking from "expo-linking";
 import { StatusBar } from "expo-status-bar";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 
 import { PermissionMonitor } from "@/components/PermissionMonitor";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { storeUploadConfigForDraft } from "@/utils/uploadConfig";
+import AuthService from "@/services/AuthService";
 
 const isUUIDv4 = (uuid: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uuid);
+
+/** Matches the OAuth callback deep link: pulse://auth/callback */
+const isAuthCallback = (url: string) =>
+  url.startsWith("pulse://auth/callback");
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -27,10 +32,53 @@ export default function RootLayout() {
     "Roboto-Bold": require("../assets/fonts/Roboto-Bold.ttf"),
   });
 
-  // When app is in background and user opens a deeplink (e.g. scans QR), go straight to shorts or server-not-setup
+  // Track whether the initial auth check has completed.
+  const [authChecked, setAuthChecked] = useState(false);
+
+  // ── Initial auth gate ──────────────────────────────────────────────────
+  // Runs once after fonts are ready. Redirects to /login if no valid token
+  // exists, otherwise lets index.tsx handle its normal redirect to /(tabs).
+  useEffect(() => {
+    if (!loaded) return;
+
+    const checkAuth = async () => {
+      try {
+        const authenticated = await AuthService.isAuthenticated();
+        if (!authenticated) {
+          router.replace("/login");
+        }
+        // If authenticated, index.tsx will redirect to /(tabs) as usual.
+      } catch (e) {
+        console.warn("[Auth] Failed to check auth status:", e);
+        router.replace("/login");
+      } finally {
+        setAuthChecked(true);
+      }
+    };
+
+    checkAuth();
+  }, [loaded, router]);
+
+  // ── Deep-link listener ─────────────────────────────────────────────────
   useEffect(() => {
     const handleUrl = async (event: { url: string }) => {
       const url = event.url;
+
+      // ── OAuth callback ──────────────────────────────────────────────────
+      if (isAuthCallback(url)) {
+        try {
+          const { code } = await AuthService.handleCallback(url);
+          const tokens = await AuthService.exchangeCodeForToken(code);
+          await AuthService.storeTokens(tokens);
+          router.replace("/(tabs)");
+        } catch (e: any) {
+          console.error("[Auth] OAuth callback failed:", e);
+          router.replace("/login");
+        }
+        return;
+      }
+
+      // ── Upload deep-link ────────────────────────────────────────────────
       const q = url.includes("?") ? url.split("?")[1] : "";
       const search = new URLSearchParams(q);
       const mode = search.get("mode");
@@ -61,12 +109,31 @@ export default function RootLayout() {
         });
       }
     };
+
     const subscription = Linking.addEventListener("url", handleUrl);
     return () => subscription.remove();
   }, [router]);
 
+  // Also check the URL that cold-launched the app (background → foreground).
+  useEffect(() => {
+    Linking.getInitialURL().then((url) => {
+      if (url && isAuthCallback(url)) {
+        AuthService.handleCallback(url)
+          .then(({ code }) => AuthService.exchangeCodeForToken(code))
+          .then((tokens) => AuthService.storeTokens(tokens))
+          .then(() => router.replace("/(tabs)"))
+          .catch((e) => {
+            console.error("[Auth] Cold-start callback failed:", e);
+            router.replace("/login");
+          });
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Don't render until fonts are loaded; the auth check gate is non-blocking
+  // for the stack – screens render while it runs, then we navigate if needed.
   if (!loaded) {
-    // Async font loading only occurs in development.
     return null;
   }
 
@@ -133,6 +200,13 @@ export default function RootLayout() {
               headerShown: false,
               presentation: "fullScreenModal",
               animation: "none",
+            }}
+          />
+          <Stack.Screen
+            name="login"
+            options={{
+              headerShown: false,
+              animation: "fade",
             }}
           />
         </Stack>

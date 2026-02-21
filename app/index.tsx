@@ -8,6 +8,7 @@ import {
   View,
 } from "react-native";
 import { storeUploadConfigForDraft } from "@/utils/uploadConfig";
+import AuthService from "@/services/AuthService";
 
 // Simple UUID v4 validation (basic format check)
 const isUUIDv4 = (uuid: string) => {
@@ -26,6 +27,15 @@ export default function Index() {
   }>();
   const router = useRouter();
   const [hasRedirected, setHasRedirected] = useState(false);
+
+  // Auth gate: check token before deciding where to send the user.
+  const [authStatus, setAuthStatus] = useState<"checking" | "authenticated" | "unauthenticated">("checking");
+
+  useEffect(() => {
+    AuthService.isAuthenticated()
+      .then((ok) => setAuthStatus(ok ? "authenticated" : "unauthenticated"))
+      .catch(() => setAuthStatus("unauthenticated"));
+  }, []);
 
   const hasValidDraftId = params.draftId && isUUIDv4(params.draftId);
   const serverNotSetupForUpload =
@@ -82,6 +92,20 @@ export default function Index() {
     hasRedirected,
   ]);
 
+  // Still resolving auth state or font loading — show spinner.
+  if (authStatus === "checking") {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator size="large" color="#F01E21" />
+      </View>
+    );
+  }
+
+  // Not authenticated → send to Login.
+  if (authStatus === "unauthenticated") {
+    return <Redirect href="/login" />;
+  }
+
   // Server not set up for upload (e.g. Pulse Clip QR with no draftId): show message here
   if (serverNotSetupForUpload) {
     return (
@@ -111,7 +135,7 @@ export default function Index() {
     );
   }
 
-  // Default to tabs
+  // Authenticated, no special params → go to tabs.
   return <Redirect href="/(tabs)" />;
 }
 
