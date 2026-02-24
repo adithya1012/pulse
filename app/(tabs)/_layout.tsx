@@ -7,6 +7,7 @@ import TabBarBackground from "@/components/ui/TabBarBackground";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { useFirstTimeOpen } from "@/hooks/useFirstTimeOpen";
+import AuthService from "@/services/AuthService";
 import AntDesign from "@expo/vector-icons/AntDesign";
 import Entypo from "@expo/vector-icons/Entypo";
 import Ionicons from "@expo/vector-icons/Ionicons";
@@ -125,17 +126,42 @@ export default function TabLayout() {
           tabBarIcon: () => null,
         }}
       />
-
+      
+      {/* Hidden login screen — shown when profile tapped while unauthenticated */}
+      <Tabs.Screen
+        name="login"
+        options={{
+          title: "",
+          tabBarButton: () => null,
+          tabBarIcon: () => null,
+          headerShown: false,
+        }}
+      />
+      
       <Tabs.Screen
         name="profile"
         options={{
           title: "Profile",
-          tabBarButton: HapticTab,
+          tabBarButton: (props) => (
+            <HapticTab
+              {...props}
+              onPress={async () => {
+                const authenticated = await AuthService.isAuthenticated();
+                if (authenticated) {
+                  router.push("/(tabs)/profile");
+                } else {
+                  router.push("/(tabs)/login");
+                }
+              }}
+            />
+          ),
           tabBarIcon: ({ color }) => (
             <Ionicons name="person-circle-outline" size={24} color={color} />
           ),
         }}
       />
+
+      
     </Tabs>
   );
 }

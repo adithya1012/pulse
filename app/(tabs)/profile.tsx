@@ -12,6 +12,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Ionicons from "@expo/vector-icons/Ionicons";
 
 import ApiClient from "@/services/ApiClient";
 import AuthService from "@/services/AuthService";
@@ -56,6 +57,15 @@ export default function ProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+
+  // ── Check auth state ──────────────────────────────────────────────────────
+
+  useEffect(() => {
+    AuthService.isAuthenticated()
+      .then((ok) => setIsAuthenticated(ok))
+      .catch(() => setIsAuthenticated(false));
+  }, []);
 
   // ── Fetch profile ─────────────────────────────────────────────────────────
 
@@ -78,8 +88,12 @@ export default function ProfileScreen() {
   }, []);
 
   useEffect(() => {
-    fetchProfile();
-  }, [fetchProfile]);
+    if (isAuthenticated) {
+      fetchProfile();
+    } else if (isAuthenticated === false) {
+      setLoading(false);
+    }
+  }, [fetchProfile, isAuthenticated]);
 
   // ── Logout ────────────────────────────────────────────────────────────────
 
@@ -93,7 +107,8 @@ export default function ProfileScreen() {
           setLoggingOut(true);
           try {
             await AuthService.logout();
-            router.replace("/login");
+            setIsAuthenticated(false);
+            setProfile(null);
           } catch {
             Alert.alert("Error", "Failed to sign out. Please try again.");
           } finally {
@@ -107,6 +122,32 @@ export default function ProfileScreen() {
   // ── Styles ────────────────────────────────────────────────────────────────
 
   const s = makeStyles(colors);
+
+  // ── Render: unauthenticated (guest) ──────────────────────────────────────
+
+  if (!loading && isAuthenticated === false) {
+    return (
+      <View
+        style={[
+          s.centered,
+          { paddingTop: insets.top, backgroundColor: colors.background },
+        ]}
+      >
+        <Ionicons name="person-circle-outline" size={72} color={colors.secondaryText} />
+        <Text style={[s.errorTitle, { marginTop: 12 }]}>You're browsing as a guest</Text>
+        <Text style={[s.errorMessage, { marginTop: 6 }]}>
+          Sign in to your Pulse Vault to access your profile, sync recordings, and more.
+        </Text>
+        <TouchableOpacity
+          style={s.retryButton}
+          onPress={() => router.push("/(tabs)/login")}
+          activeOpacity={0.8}
+        >
+          <Text style={s.retryButtonText}>Sign In</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   // ── Render: loading ───────────────────────────────────────────────────────
 

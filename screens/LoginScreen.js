@@ -30,7 +30,7 @@ const URL_REGEX = /^https?:\/\/.+/i;
 // Component
 // ---------------------------------------------------------------------------
 
-export default function LoginScreen() {
+export default function LoginScreen({ onGuestContinue } = {}) {
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   const router = useRouter();
@@ -79,7 +79,11 @@ export default function LoginScreen() {
           ),
         ]);
 
-        router.replace('/(tabs)');
+        if (onGuestContinue) {
+          onGuestContinue();
+        } else {
+          router.replace('/(tabs)');
+        }
       } else if (result.type === 'cancel' || result.type === 'dismiss') {
         // User closed the browser — silent, no error shown.
       } else {
@@ -176,6 +180,20 @@ export default function LoginScreen() {
               <Text style={s.buttonText}>Login with Pulse Vault</Text>
             )}
           </TouchableOpacity>
+
+          {/* Continue as Guest */}
+          {onGuestContinue ? (
+            <TouchableOpacity
+              style={s.guestButton}
+              onPress={onGuestContinue}
+              disabled={loading}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Continue as guest"
+            >
+              <Text style={s.guestButtonText}>Continue as Guest</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {/* ── Footer ── */}
@@ -313,6 +331,19 @@ function makeStyles(colors) {
       fontSize: 16,
       color: '#fff',
       letterSpacing: 0.3,
+    },
+
+    // Guest button
+    guestButton: {
+      marginTop: 14,
+      paddingVertical: 14,
+      alignItems: 'center',
+    },
+    guestButtonText: {
+      fontFamily: 'Roboto-Regular',
+      fontSize: 15,
+      color: colors.secondaryText,
+      letterSpacing: 0.2,
     },
 
     // Footer

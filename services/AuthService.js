@@ -3,6 +3,7 @@ import * as Application from 'expo-application';
 import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
+import { Platform } from 'react-native';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -22,7 +23,7 @@ const SECURE_STORE_KEYS = {
 const EXPIRY_BUFFER_MS = 60 * 1000; // 60 seconds
 
 const CLIENT_ID = 'pulse-mobile';
-const REDIRECT_URI = 'pulse://auth/callback';
+const REDIRECT_URI = 'pulsecam://auth/callback';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -164,7 +165,7 @@ class AuthService {
 
     const authUrl = `${vaultUrl.replace(/\/$/, '')}/oauth/authorize?${params.toString()}`;
 
-    // 6. Open the browser and wait for the redirect back to pulse://auth/callback.
+    // 6. Open the browser and wait for the redirect back to pulsecam://auth/callback.
     const result = await WebBrowser.openAuthSessionAsync(authUrl, REDIRECT_URI);
 
     return result;
@@ -218,7 +219,7 @@ class AuthService {
   /**
    * Parses the deep-link callback URL and validates the state parameter.
    *
-   * @param {string} url  The full callback URL, e.g. "pulse://auth/callback?code=...&state=..."
+   * @param {string} url  The full callback URL, e.g. "pulsecam://auth/callback?code=...&state=..."
    * @returns {Promise<{ code: string }>} The extracted authorization code.
    * @throws {Error} If the state is missing, mismatched, or an error is returned by the server.
    */
@@ -446,10 +447,12 @@ class AuthService {
     if (stored) return stored;
 
     // Try platform-native identifiers first.
-    const nativeId =
-      (await Application.getIosIdForVendorAsync?.()) ??
-      Application.getAndroidId?.() ??
-      null;
+    let nativeId = null;
+    if (Platform.OS === 'ios') {
+      nativeId = await Application.getIosIdForVendorAsync?.();
+    } else if (Platform.OS === 'android') {
+      nativeId = Application.getAndroidId?.();
+    }
 
     // Fall back to a random UUID if native IDs are unavailable (e.g. simulator).
     const deviceId = nativeId ?? Crypto.randomUUID();

@@ -105,6 +105,144 @@ Planned features for institutional deployment:
 - **Content Management**: Centralized content library with access controls
 - **Analytics Dashboard**: Usage analytics and content effectiveness metrics
 
+## 🔐 Authentication Flow
+
+The following diagram illustrates the complete OAuth 2.0 + PKCE authentication flow between the Pulse mobile app and the PulseVault backend:
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant PulseApp as Pulse App<br/>(React Native)
+    participant SecureStore as Secure Storage
+    participant Browser as System Browser
+    participant PulseVault as PulseVault Backend<br/>(Express Server)
+    participant Database as Database
+
+    Note over User,Database: 1. APP INITIALIZATION
+    User->>PulseApp: Opens Pulse App
+    PulseApp->>SecureStore: Check for access_token
+    SecureStore-->>PulseApp: No token found
+    PulseApp->>User: Show Login Screen
+
+    Note over User,Database: 2. USER INITIATES LOGIN
+    User->>PulseApp: Enters Vault URL<br/>clicks "Login"
+    PulseApp->>SecureStore: Store vault URL
+    
+    Note over User,Database: 3. PKCE GENERATION (Client-Side Security)
+    PulseApp->>PulseApp: Generate random<br/>code_verifier (32 bytes)
+    PulseApp->>PulseApp: Hash code_verifier<br/>→ code_challenge (SHA256)
+    PulseApp->>PulseApp: Generate random state
+    PulseApp->>SecureStore: Store state & code_verifier
+
+    Note over User,Database: 4. OPEN AUTHORIZATION URL
+    PulseApp->>Browser: Open Authorization URL:<br/>GET /oauth/authorize?<br/>response_type=code&<br/>client_id=pulse-mobile&<br/>redirect_uri=pulse://auth/callback&<br/>code_challenge=xyz&<br/>code_challenge_method=S256&<br/>state=abc
+    Browser->>PulseVault: GET /oauth/authorize
+    
+    Note over User,Database: 5. VALIDATE & SHOW LOGIN PAGE
+    PulseVault->>PulseVault: Validate parameters<br/>(PKCE required, valid redirect_uri)
+    PulseVault-->>Browser: Render login.ejs<br/>(with hidden OAuth params)
+    Browser-->>User: Display login form
+
+    Note over User,Database: 6. USER AUTHENTICATES
+    User->>Browser: Enter email & password<br/>click "Login"
+    Browser->>PulseVault: POST /auth/login<br/>{email, password,<br/>code_challenge,<br/>redirect_uri, state}
+    
+    Note over User,Database: 7. VERIFY CREDENTIALS
+    PulseVault->>Database: SELECT user WHERE email=?
+    Database-->>PulseVault: User record
+    PulseVault->>PulseVault: Verify password<br/>(bcrypt compare)
+    
+    Note over User,Database: 8. GENERATE AUTHORIZATION CODE
+    PulseVault->>PulseVault: Generate auth code<br/>(32 random bytes)
+    PulseVault->>Database: INSERT INTO oauth_authorization_codes<br/>(code, user_id, code_challenge,<br/>expires_at: now + 10 min)
+    Database-->>PulseVault: Success
+    
+    Note over User,Database: 9. REDIRECT TO APP WITH CODE
+    PulseVault-->>Browser: HTTP 302 Redirect<br/>pulse://auth/callback?<br/>code=xyz&state=abc
+    Browser->>PulseApp: Deep link callback
+
+    Note over User,Database: 10. VERIFY STATE & EXCHANGE CODE
+    PulseApp->>SecureStore: Get stored state
+    SecureStore-->>PulseApp: state value
+    PulseApp->>PulseApp: Verify state matches<br/>(CSRF protection)
+    PulseApp->>SecureStore: Get code_verifier
+    SecureStore-->>PulseApp: code_verifier
+    
+    Note over User,Database: 11. TOKEN EXCHANGE REQUEST
+    PulseApp->>PulseVault: POST /oauth/token<br/>{grant_type: "authorization_code",<br/>code: xyz,<br/>code_verifier: original_verifier,<br/>redirect_uri,<br/>device_id}
+
+    Note over User,Database: 12. VERIFY PKCE CHALLENGE
+    PulseVault->>Database: SELECT FROM oauth_authorization_codes<br/>WHERE code=? AND used=false<br/>AND expires_at > now
+    Database-->>PulseVault: code_challenge, user_id
+    PulseVault->>PulseVault: Hash received code_verifier<br/>→ computed_challenge
+    PulseVault->>PulseVault: Compare:<br/>computed_challenge == stored_challenge
+    
+    Note over User,Database: 13. MARK CODE AS USED
+    PulseVault->>Database: UPDATE oauth_authorization_codes<br/>SET used=true WHERE code=?
+    Database-->>PulseVault: Success
+
+    Note over User,Database: 14. GENERATE JWT TOKENS
+    PulseVault->>PulseVault: Generate access_token<br/>(JWT, 30 min expiry)
+    PulseVault->>PulseVault: Generate refresh_token<br/>(JWT, 30 day expiry)
+    PulseVault->>Database: INSERT INTO oauth_access_tokens<br/>(user_id, access_token,<br/>refresh_token, device_id,<br/>expires_at)
+    Database-->>PulseVault: Success
+
+    Note over User,Database: 15. RETURN TOKENS TO APP
+    PulseVault-->>PulseApp: {access_token,<br/>refresh_token,<br/>token_type: "Bearer",<br/>expires_in: 1800}
+
+    Note over User,Database: 16. STORE TOKENS SECURELY
+    PulseApp->>SecureStore: Store access_token
+    PulseApp->>SecureStore: Store refresh_token
+    PulseApp->>SecureStore: Store token_expiry
+    SecureStore-->>PulseApp: Success
+    PulseApp->>User: Navigate to Home Screen
+
+    Note over User,Database: 17. MAKE AUTHENTICATED API REQUESTS
+    User->>PulseApp: View profile
+    PulseApp->>SecureStore: Get access_token
+    SecureStore-->>PulseApp: access_token
+    PulseApp->>PulseApp: Check if token expired
+    PulseApp->>PulseVault: GET /api/user/profile<br/>Authorization: Bearer {token}
+
+    Note over User,Database: 18. VERIFY TOKEN
+    PulseVault->>PulseVault: Verify JWT signature<br/>& expiration
+    PulseVault->>Database: SELECT FROM oauth_access_tokens<br/>WHERE access_token=?<br/>AND revoked=false
+    Database-->>PulseVault: Token valid, user_id
+    PulseVault->>Database: SELECT user profile<br/>WHERE id=user_id
+    Database-->>PulseVault: User data
+    PulseVault-->>PulseApp: {id, email, name}
+    PulseApp-->>User: Display profile
+
+    Note over User,Database: 19. TOKEN EXPIRATION & REFRESH
+    User->>PulseApp: Make API request<br/>(after 30+ minutes)
+    PulseApp->>SecureStore: Get access_token
+    SecureStore-->>PulseApp: access_token (expired)
+    PulseApp->>PulseApp: Check expiry:<br/>token is expired
+    PulseApp->>SecureStore: Get refresh_token
+    SecureStore-->>PulseApp: refresh_token
+    
+    Note over User,Database: 20. REFRESH TOKEN REQUEST
+    PulseApp->>PulseVault: POST /oauth/token/refresh<br/>{grant_type: "refresh_token",<br/>refresh_token}
+    PulseVault->>PulseVault: Verify refresh_token JWT
+    PulseVault->>Database: SELECT FROM oauth_access_tokens<br/>WHERE refresh_token=?<br/>AND revoked=false
+    Database-->>PulseVault: Valid, user_id
+    PulseVault->>PulseVault: Generate new access_token
+    PulseVault->>Database: UPDATE oauth_access_tokens<br/>SET access_token=new_token
+    Database-->>PulseVault: Success
+    PulseVault-->>PulseApp: {access_token, expires_in: 1800}
+    PulseApp->>SecureStore: Store new access_token
+    PulseApp->>PulseApp: Retry original API request
+
+    Note over User,Database: 21. LOGOUT FLOW
+    User->>PulseApp: Click "Logout"
+    PulseApp->>SecureStore: Delete access_token
+    PulseApp->>SecureStore: Delete refresh_token
+    PulseApp->>SecureStore: Delete token_expiry
+    PulseApp->>SecureStore: Delete vault URL
+    SecureStore-->>PulseApp: Cleared
+    PulseApp-->>User: Navigate to Login Screen
+```
+
 ## Installation
 
 ```bash
@@ -204,7 +342,7 @@ const outputUri = await VideoConcatModule.export(segments);
 This project includes automated CodeQL security analysis for Swift/iOS code. The CodeQL workflow is configured to build the React Native iOS project with the following settings:
 
 - **Workspace**: `ios/pulse.xcworkspace`
-- **Scheme**: `pulse`
+- **Scheme**: `pulsecam`
 - **SDK**: iPhone Simulator SDK
 - **Configuration**: Debug build with code signing disabled
 

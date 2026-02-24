@@ -4,11 +4,10 @@ import {
   ThemeProvider,
 } from "@react-navigation/native";
 import { useFonts } from "expo-font";
-import { useRouter } from "expo-router";
-import { Stack } from "expo-router";
+import { useRouter, Stack } from "expo-router";
 import * as Linking from "expo-linking";
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 
@@ -20,9 +19,9 @@ import AuthService from "@/services/AuthService";
 const isUUIDv4 = (uuid: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uuid);
 
-/** Matches the OAuth callback deep link: pulse://auth/callback */
+/** Matches the OAuth callback deep link: pulsecam://auth/callback */
 const isAuthCallback = (url: string) =>
-  url.startsWith("pulse://auth/callback");
+  url.startsWith("pulsecam://auth/callback");
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -31,33 +30,6 @@ export default function RootLayout() {
     "Roboto-Regular": require("../assets/fonts/Roboto-Regular.ttf"),
     "Roboto-Bold": require("../assets/fonts/Roboto-Bold.ttf"),
   });
-
-  // Track whether the initial auth check has completed.
-  const [authChecked, setAuthChecked] = useState(false);
-
-  // ── Initial auth gate ──────────────────────────────────────────────────
-  // Runs once after fonts are ready. Redirects to /login if no valid token
-  // exists, otherwise lets index.tsx handle its normal redirect to /(tabs).
-  useEffect(() => {
-    if (!loaded) return;
-
-    const checkAuth = async () => {
-      try {
-        const authenticated = await AuthService.isAuthenticated();
-        if (!authenticated) {
-          router.replace("/login");
-        }
-        // If authenticated, index.tsx will redirect to /(tabs) as usual.
-      } catch (e) {
-        console.warn("[Auth] Failed to check auth status:", e);
-        router.replace("/login");
-      } finally {
-        setAuthChecked(true);
-      }
-    };
-
-    checkAuth();
-  }, [loaded, router]);
 
   // ── Deep-link listener ─────────────────────────────────────────────────
   useEffect(() => {
@@ -69,11 +41,11 @@ export default function RootLayout() {
         try {
           const { code } = await AuthService.handleCallback(url);
           const tokens = await AuthService.exchangeCodeForToken(code);
-          await AuthService.storeTokens(tokens);
+          await AuthService.storeTokens(tokens as any);
           router.replace("/(tabs)");
         } catch (e: any) {
           console.error("[Auth] OAuth callback failed:", e);
-          router.replace("/login");
+          router.replace("/(tabs)/login");
         }
         return;
       }
@@ -120,11 +92,11 @@ export default function RootLayout() {
       if (url && isAuthCallback(url)) {
         AuthService.handleCallback(url)
           .then(({ code }) => AuthService.exchangeCodeForToken(code))
-          .then((tokens) => AuthService.storeTokens(tokens))
+          .then((tokens) => AuthService.storeTokens(tokens as any))
           .then(() => router.replace("/(tabs)"))
           .catch((e) => {
             console.error("[Auth] Cold-start callback failed:", e);
-            router.replace("/login");
+            router.replace("/(tabs)/login");
           });
       }
     });
@@ -200,13 +172,6 @@ export default function RootLayout() {
               headerShown: false,
               presentation: "fullScreenModal",
               animation: "none",
-            }}
-          />
-          <Stack.Screen
-            name="login"
-            options={{
-              headerShown: false,
-              animation: "fade",
             }}
           />
         </Stack>
